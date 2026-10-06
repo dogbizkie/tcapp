@@ -267,6 +267,8 @@ for locs, meas, scan, orient, monitor, tech3, tech1 in labor_groups:
 # --- INITIALIZE STATE ---
 if 'calc_run' not in st.session_state:
     st.session_state.calc_run = False
+if 'extra_items' not in st.session_state:
+    st.session_state.extra_items = {}
 
 # --- 2. STREAMLIT UI SETUP ---
 st.set_page_config(page_title="Cubicle Costing App", layout="wide")
@@ -279,7 +281,7 @@ finish = st.sidebar.selectbox("Finish Type", ["Solid", "Woodgrain"])
 thickness = st.sidebar.selectbox("Thickness", ["10mm", "12mm", "13mm", "18mm"])
 opt_mode = st.sidebar.radio("Board Stock Optimization", ["Ex-Stock (6x14 Only)", "All Stocks (Cost-Efficient)"])
 
-st.sidebar.header("2. Hardware Configuration")
+st.sidebar.header("2. Auto-Calculated Hardware")
 leg_type = st.sidebar.selectbox("Adjustable Leg", list(ACCESSORIES_DB["Legs"].keys()))
 hook_type = st.sidebar.selectbox("Coat Hook", list(ACCESSORIES_DB["Hooks"].keys()))
 knob_type = st.sidebar.selectbox("Door Knob", list(ACCESSORIES_DB["Door Knobs"].keys()))
@@ -291,14 +293,45 @@ uc_type = st.sidebar.selectbox("U-Channel Type", list(ACCESSORIES_DB["U-Channels
 hr_type = st.sidebar.selectbox("Headrail Type", list(ACCESSORIES_DB["Headrails"].keys()))
 df_type = st.sidebar.selectbox("Door Frame", list(ACCESSORIES_DB["Door Frames"].keys()))
 
-st.sidebar.markdown("### Extra Extrusions & Hardware")
-dj_type = st.sidebar.selectbox("Door Jamb", list(ACCESSORIES_DB["Door Jambs"].keys()))
-dj_qty = st.sidebar.number_input("Door Jamb Qty", min_value=0, value=0)
-ap_type = st.sidebar.selectbox("Aluminium Profile", list(ACCESSORIES_DB["Aluminium Profiles"].keys()))
-ap_qty = st.sidebar.number_input("Profile Qty", min_value=0, value=0)
-sb_type = st.sidebar.selectbox("Shoebox", list(ACCESSORIES_DB["Shoeboxes"].keys()))
-sb_qty = st.sidebar.number_input("Shoebox Qty", min_value=0, value=0)
+# --- NEW: Live Extra Accessories Adder ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ➕ Manual Accessory Addition")
+st.sidebar.info("Add multiple custom extrusions, shoeboxes, or extra hardware pieces to the main list before calculating.")
 
+all_accs = [k for k in FLAT_PRICES.keys() if k != "None"]
+add_item = st.sidebar.selectbox("Select Accessory", options=all_accs)
+add_qty = st.sidebar.number_input("Quantity to Add", min_value=1, value=1)
+
+if st.sidebar.button("Add to Main List"):
+    st.session_state.extra_items[add_item] = st.session_state.extra_items.get(add_item, 0) + add_qty
+
+if st.session_state.extra_items:
+    st.sidebar.markdown("**Live Added Accessories:**")
+    
+    # Convert dict to format suitable for data_editor
+    extra_df = pd.DataFrame([{"Item": k, "Qty": v} for k, v in st.session_state.extra_items.items()])
+    
+    edited_extras_df = st.sidebar.data_editor(
+        extra_df, 
+        hide_index=True, 
+        num_rows="dynamic",
+        column_config={
+            "Item": st.column_config.TextColumn("Item", disabled=True),
+            "Qty": st.column_config.NumberColumn("Qty", min_value=0)
+        },
+        key="extra_editor",
+        use_container_width=True
+    )
+    
+    # Sync back edited data to session state (allows row deletion or qty editing)
+    updated_extras = {}
+    for _, row in edited_extras_df.iterrows():
+        if pd.notna(row["Item"]) and row["Qty"] > 0:
+            updated_extras[row["Item"]] = int(row["Qty"])
+            
+    st.session_state.extra_items = updated_extras
+
+st.sidebar.markdown("---")
 st.sidebar.header("3. Logistics & Labor")
 area = st.sidebar.selectbox("Project Area (Labor)", list(LABOR_DB.keys()))
 transport_loc = st.sidebar.selectbox("Transport Destination", list(TRANSPORT_DB.keys()))
@@ -413,13 +446,9 @@ if st.button("Calculate Total Project Cost", type="primary"):
         frame_mm = sum(d['qty'] * ((d['h'] * 2) + d['w']) for d in doors)
         bom[df_type] = math.ceil(frame_mm / 4200)
 
-    # Add custom extrusions/shoeboxes
-    if dj_type != "None" and dj_qty > 0:
-        bom[dj_type] = bom.get(dj_type, 0) + dj_qty
-    if ap_type != "None" and ap_qty > 0:
-        bom[ap_type] = bom.get(ap_type, 0) + ap_qty
-    if sb_type != "None" and sb_qty > 0:
-        bom[sb_type] = bom.get(sb_type, 0) + sb_qty
+    # --- INJECT MANUAL ACCESSORIES ---
+    for ext_item, ext_qty in st.session_state.extra_items.items():
+        bom[ext_item] = bom.get(ext_item, 0) + ext_qty
 
     # Nesting & Board Cost (With Kerf)
     kerf = 5
