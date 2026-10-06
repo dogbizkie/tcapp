@@ -18,15 +18,52 @@ BOARD_DIMS = {
     "6x12": (1830, 3660), "6x14": (1830, 4270)
 }
 
-ACCESSORIES = {
-    "Nylon Leg - Old": 9.50, "Stainless Steel Leg": 25.00,
-    "Nylon Coat Hook - Old": 5.00, "Stainless Steel Coat Hook": 6.90,
-    "Nylon Lockset - Old": 8.50, "Stainless Steel Lockset (136)": 29.50,
-    "Stainless Steel Hinge - T31 (10mm)": 19.00, "Stainless Steel Hinge - T31 (12/13mm)": 24.20,
-    "Nylon L-Bracket": 1.50, "Stainless Steel L-Bracket": 3.00,
-    "Aluminium Oval Headrail - Black": 99.00, "Aluminium Square Headrail - Black": 116.00,
-    "Aluminium U-Channel - Black (12 & 13mm)": 37.80, "Aluminium Door Frame (New) - Black": 100.00
+# Categorized Accessory Database
+ACCESSORIES_DB = {
+    "Legs": {
+        "Nylon Leg - Old": 9.50, 
+        "Stainless Steel Leg": 25.00, 
+        "None": 0.00
+    },
+    "Hooks": {
+        "Nylon Coat Hook - Old": 5.00, 
+        "Stainless Steel Coat Hook": 6.90, 
+        "None": 0.00
+    },
+    "Locksets": {
+        "Nylon Lockset - Old": 8.50, 
+        "Stainless Steel Lockset (136)": 29.50, 
+        "None": 0.00
+    },
+    "Hinges": {
+        "Stainless Steel Hinge - T31 (10mm)": 19.00, 
+        "Stainless Steel Hinge - T31 (12/13mm)": 24.20, 
+        "None": 0.00
+    },
+    "L-Brackets": {
+        "Nylon L-Bracket": 1.50, 
+        "Stainless Steel L-Bracket": 3.00, 
+        "None": 0.00
+    },
+    "U-Channels": {
+        "Aluminium U-Channel - Black (12 & 13mm)": 37.80, 
+        "None": 0.00
+    },
+    "Headrails": {
+        "Aluminium Oval Headrail - Black": 99.00, 
+        "Aluminium Square Headrail - Black": 116.00, 
+        "None": 0.00
+    },
+    "Door Frames": {
+        "Aluminium Door Frame (New) - Black": 100.00, 
+        "None": 0.00
+    }
 }
+
+# Flatten prices for easy BOM lookup
+FLAT_PRICES = {}
+for category in ACCESSORIES_DB.values():
+    FLAT_PRICES.update(category)
 
 # Transport Database 
 TRANSPORT_DB = {
@@ -66,15 +103,15 @@ finish = st.sidebar.selectbox("Finish Type", ["Solid", "Woodgrain"])
 thickness = st.sidebar.selectbox("Thickness", ["10mm", "12mm", "13mm", "18mm"])
 
 st.sidebar.header("2. Hardware Configuration")
-leg_type = st.sidebar.selectbox("Adjustable Leg", ["Nylon Leg - Old", "Stainless Steel Leg"])
-hook_type = st.sidebar.selectbox("Coat Hook", ["Nylon Coat Hook - Old", "Stainless Steel Coat Hook"])
-lock_type = st.sidebar.selectbox("Lockset", ["Nylon Lockset - Old", "Stainless Steel Lockset (136)"])
-hinge_type = st.sidebar.selectbox("Hinge", ["Stainless Steel Hinge - T31 (10mm)", "Stainless Steel Hinge - T31 (12/13mm)"])
+leg_type = st.sidebar.selectbox("Adjustable Leg", list(ACCESSORIES_DB["Legs"].keys()))
+hook_type = st.sidebar.selectbox("Coat Hook", list(ACCESSORIES_DB["Hooks"].keys()))
+lock_type = st.sidebar.selectbox("Lockset", list(ACCESSORIES_DB["Locksets"].keys()))
+hinge_type = st.sidebar.selectbox("Hinge", list(ACCESSORIES_DB["Hinges"].keys()))
 conn_type = st.sidebar.radio("Connector Style", ["L-Bracket", "U-Channel"])
-lb_type = st.sidebar.selectbox("L-Bracket Type", ["Nylon L-Bracket", "Stainless Steel L-Bracket"])
-uc_type = st.sidebar.selectbox("U-Channel Type", ["Aluminium U-Channel - Black (12 & 13mm)"])
-hr_type = st.sidebar.selectbox("Headrail Type", ["Aluminium Oval Headrail - Black", "Aluminium Square Headrail - Black"])
-df_type = st.sidebar.selectbox("Door Frame (Tech 1)", ["Aluminium Door Frame (New) - Black"])
+lb_type = st.sidebar.selectbox("L-Bracket Type", list(ACCESSORIES_DB["L-Brackets"].keys()))
+uc_type = st.sidebar.selectbox("U-Channel Type", list(ACCESSORIES_DB["U-Channels"].keys()))
+hr_type = st.sidebar.selectbox("Headrail Type", list(ACCESSORIES_DB["Headrails"].keys()))
+df_type = st.sidebar.selectbox("Door Frame (Tech 1)", list(ACCESSORIES_DB["Door Frames"].keys()))
 
 st.sidebar.header("3. Logistics & Labor")
 area = st.sidebar.selectbox("Project Area (Labor)", list(LABOR_DB.keys()))
@@ -117,12 +154,12 @@ if st.button("Calculate Total Project Cost", type="primary"):
     # Door Hardware
     hinges_per_door = 4 if door_h > 2100 else 3
     if door_qty > 0:
-        bom[hinge_type] = door_qty * hinges_per_door
-        bom[hook_type] = door_qty * 1
-        bom[lock_type] = door_qty * 1
+        if hinge_type != "None": bom[hinge_type] = door_qty * hinges_per_door
+        if hook_type != "None": bom[hook_type] = door_qty * 1
+        if lock_type != "None": bom[lock_type] = door_qty * 1
     
     # Adjustable Legs
-    if sys_series == "Scan":
+    if sys_series == "Scan" and leg_type != "None":
         total_legs = (int_pil_qty * 2) + (end_pil_qty * 1)
         if total_legs > 0: bom[leg_type] = total_legs
 
@@ -132,24 +169,20 @@ if st.button("Calculate Total Project Cost", type="primary"):
                          (int_pil_qty * (8 if int_pil_h > 2100 else 6)) + \
                          (end_pil_qty * (4 if end_pil_h > 2100 else 3)) + \
                          (uri_pan_qty * 6)
-        if total_brackets > 0: bom[lb_type] = total_brackets
+        if total_brackets > 0 and lb_type != "None": bom[lb_type] = total_brackets
     else:
         total_u_mm = (div_pan_qty * div_pan_h) + (int_pil_qty * int_pil_h) + (end_pil_qty * end_pil_h)
-        if total_u_mm > 0: bom[uc_type] = math.ceil(total_u_mm / 6100)
-        if uri_pan_qty > 0: bom[lb_type] = (uri_pan_qty * 6)
+        if total_u_mm > 0 and uc_type != "None": bom[uc_type] = math.ceil(total_u_mm / 6100)
+        if uri_pan_qty > 0 and lb_type != "None": bom[lb_type] = (uri_pan_qty * 6)
 
     # Headrail & Extrusions
-    if sys_series in ["Scan", "Orient"]:
+    if sys_series in ["Scan", "Orient"] and hr_type != "None":
         hr_length = ((door_qty * door_w) + (int_pil_qty * int_pil_w) + (end_pil_qty * end_pil_w)) * 1.10
         if hr_length > 0: bom[hr_type] = math.ceil(hr_length / 6100)
         
-    if sys_series == "Tech 1" and door_qty > 0:
+    if sys_series == "Tech 1" and door_qty > 0 and df_type != "None":
         frame_mm = door_qty * ((door_h * 2) + door_w)
         bom[df_type] = math.ceil(frame_mm / 4200)
-
-    # Calculate Hardware Cost
-    for item, qty in bom.items():
-        hw_cost += ACCESSORIES.get(item, 0) * qty
 
     # Nesting & Board Cost (Simplified Area Heuristic)
     kerf = 5
@@ -161,12 +194,35 @@ if st.button("Calculate Total Project Cost", type="primary"):
     if sys_series not in ["Tech 1", "Tech 3"]:
         total_area += (div_pan_qty * (div_pan_w + kerf) * (div_pan_h + kerf))
 
-    # Assume worst-case board size for estimating max yield cost 
     b_area = 1830 * 4270 
     boards_needed = math.ceil(total_area / (b_area * 0.85)) if total_area > 0 else 0
     
     price_dict = ASUWARIS_PRICES[finish] if brand == "ASUWARIS" else FORMICA_PRICES[finish]
-    board_cost = boards_needed * price_dict.get("6x14", 0)
+    board_unit_price = price_dict.get("6x14", 0)
+    board_cost = boards_needed * board_unit_price
+
+    # Compile Itemized Materials Table
+    itemized_data = []
+    
+    for item, qty in bom.items():
+        unit_price = FLAT_PRICES.get(item, 0)
+        total_item_cost = unit_price * qty
+        hw_cost += total_item_cost
+        itemized_data.append({
+            "Item": item,
+            "Qty": qty,
+            "Unit Price (RM)": f"{unit_price:,.2f}",
+            "Total Cost (RM)": f"{total_item_cost:,.2f}"
+        })
+        
+    # Append the raw boards to the materials table
+    if boards_needed > 0:
+        itemized_data.append({
+            "Item": f"Raw Board ({brand} {finish} 6x14)",
+            "Qty": boards_needed,
+            "Unit Price (RM)": f"{board_unit_price:,.2f}",
+            "Total Cost (RM)": f"{board_cost:,.2f}"
+        })
 
     # Labor Cost Calculation
     labor_cost = 0
@@ -182,15 +238,13 @@ if st.button("Calculate Total Project Cost", type="primary"):
     transport_cost = TRANSPORT_DB[transport_loc][lorry_type]
 
     # --- 4. RESULTS RENDER ---
-    # Properly indented to run only after the button is clicked
     st.markdown("---")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns([1.5, 1])
     
     with c1:
-        st.subheader("Hardware & Materials")
-        if bom:
-            st.table(pd.DataFrame(list(bom.items()), columns=["Item", "Qty"]))
-        st.write(f"**Boards Needed (6x14):** {boards_needed}")
+        st.subheader("Materials Breakdown")
+        if itemized_data:
+            st.table(pd.DataFrame(itemized_data))
         st.metric("Total Material Cost", f"RM {hw_cost + board_cost:,.2f}")
 
     with c2:
@@ -199,8 +253,8 @@ if st.button("Calculate Total Project Cost", type="primary"):
         st.write(f"**Area (Labor):** {area}")
         st.write(f"**Measurement Fee:** RM {measurement_cost:,.2f}")
         st.metric("Total Logistics Cost", f"RM {transport_cost + labor_cost:,.2f}")
-
-    with c3:
+        
+        st.markdown("---")
         st.subheader("Final Project Cost")
         grand_total = hw_cost + board_cost + transport_cost + labor_cost
         st.metric("Grand Total (RM)", f"RM {grand_total:,.2f}")
