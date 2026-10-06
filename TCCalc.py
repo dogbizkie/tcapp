@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import math
-from rectpack import newPacker
 
 # --- 1. DATABASES & PRICING ---
 
@@ -29,7 +28,7 @@ ACCESSORIES = {
     "Aluminium U-Channel - Black (12 & 13mm)": 37.80, "Aluminium Door Frame (New) - Black": 100.00
 }
 
-# Transport Database (Sample mapped from upload)
+# Transport Database 
 TRANSPORT_DB = {
     "Kuala Lumpur": {"1 Tonne": 120, "3 Tonne": 195},
     "Shah Alam": {"1 Tonne": 135, "3 Tonne": 210},
@@ -41,8 +40,7 @@ TRANSPORT_DB = {
     "Penang": {"1 Tonne": 790, "3 Tonne": 980}
 }
 
-# Labor Database (Sample mapped from upload - Base cost for KL & PJ Area)
-# Structure: Area -> Series -> Thickness -> [Measurement Cost, Labor Cost per Cubicle]
+# Labor Database 
 LABOR_DB = {
     "KL & PJ": {
         "Scan": {"10mm": [100, 120], "12mm": [100, 125], "13mm": [100, 125], "18mm": [100, 165]},
@@ -52,7 +50,7 @@ LABOR_DB = {
         "Tech 3": {"10mm": [100, 96], "12mm": [100, 101], "13mm": [100, 101], "18mm": [100, 135]}
     },
     "Shah Alam": {
-        "Scan": {"12mm": [100, 130]}, # Add full arrays based on the master sheet
+        "Scan": {"12mm": [100, 130]}, 
         "Tech 1": {"12mm": [100, 85]}
     }
 }
@@ -153,7 +151,7 @@ if st.button("Calculate Total Project Cost", type="primary"):
     for item, qty in bom.items():
         hw_cost += ACCESSORIES.get(item, 0) * qty
 
-    # Nesting & Board Cost (Simplified Area Heuristic for MVP rendering speed)
+    # Nesting & Board Cost (Simplified Area Heuristic)
     kerf = 5
     total_area = (door_qty * (door_w + kerf) * (door_h + kerf)) + \
                  (int_pil_qty * (int_pil_w + kerf) * (int_pil_h + kerf)) + \
@@ -165,4 +163,46 @@ if st.button("Calculate Total Project Cost", type="primary"):
 
     # Assume worst-case board size for estimating max yield cost 
     b_area = 1830 * 4270 
-    boards_needed
+    boards_needed = math.ceil(total_area / (b_area * 0.85)) if total_area > 0 else 0
+    
+    price_dict = ASUWARIS_PRICES[finish] if brand == "ASUWARIS" else FORMICA_PRICES[finish]
+    board_cost = boards_needed * price_dict.get("6x14", 0)
+
+    # Labor Cost Calculation
+    labor_cost = 0
+    measurement_cost = 0
+    try:
+        rates = LABOR_DB[area][sys_series][thickness]
+        measurement_cost = rates[0]
+        labor_cost = (rates[1] * door_qty) + measurement_cost 
+    except KeyError:
+        st.warning("Labor rates for this specific Area/Series/Thickness combination are not in the sample DB yet.")
+
+    # Transport Cost Calculation
+    transport_cost = TRANSPORT_DB[transport_loc][lorry_type]
+
+    # --- 4. RESULTS RENDER ---
+    # Properly indented to run only after the button is clicked
+    st.markdown("---")
+    c1, c2, c3 = st.columns(3)
+    
+    with c1:
+        st.subheader("Hardware & Materials")
+        if bom:
+            st.table(pd.DataFrame(list(bom.items()), columns=["Item", "Qty"]))
+        st.write(f"**Boards Needed (6x14):** {boards_needed}")
+        st.metric("Total Material Cost", f"RM {hw_cost + board_cost:,.2f}")
+
+    with c2:
+        st.subheader("Logistics & Labor")
+        st.write(f"**Location:** {transport_loc} ({lorry_type})")
+        st.write(f"**Area (Labor):** {area}")
+        st.write(f"**Measurement Fee:** RM {measurement_cost:,.2f}")
+        st.metric("Total Logistics Cost", f"RM {transport_cost + labor_cost:,.2f}")
+
+    with c3:
+        st.subheader("Final Project Cost")
+        grand_total = hw_cost + board_cost + transport_cost + labor_cost
+        st.metric("Grand Total (RM)", f"RM {grand_total:,.2f}")
+        if door_qty > 0:
+            st.write(f"**Estimated Cost per Cubicle:** RM {grand_total / door_qty:,.2f}")
