@@ -1,16 +1,21 @@
 import streamlit as st
 import pandas as pd
 import math
+import io
 
 # --- 1. DATABASES & PRICING ---
 
 ASUWARIS_PRICES = {
     "Solid": {"6x8": 646, "6x12": 852, "6x14": 1003},
-    "Woodgrain": {"6x8": 656, "6x12": 867, "6x14": 1019}
+    "Woodgrain": {"6x8": 656, "6x12": 867, "6x14": 1019},
+    "Solid TX": {"6x8": 686, "6x12": 892, "6x14": 1053},
+    "Woodgrain TX": {"6x8": 696, "6x12": 907, "6x14": 1069}
 }
 FORMICA_PRICES = {
     "Solid": {"6x9": 1043, "6x12": 1391, "6x14": 1622},
-    "Woodgrain": {"6x9": 1070, "6x12": 1427, "6x14": 1665}
+    "Woodgrain": {"6x9": 1070, "6x12": 1427, "6x14": 1665},
+    "Solid TX": {"6x9": 1093, "6x12": 1441, "6x14": 1672},
+    "Woodgrain TX": {"6x9": 1120, "6x12": 1477, "6x14": 1715}
 }
 
 BOARD_DIMS = {
@@ -196,7 +201,10 @@ if 'calc_done' not in st.session_state:
     st.session_state.calc_done = False
 if 'doors_count' not in st.session_state:
     st.session_state.doors_count = 0
-
+if 'cutting_html' not in st.session_state:
+    st.session_state.cutting_html = ""
+if 'extra_boards_warning' not in st.session_state:
+    st.session_state.extra_boards_warning = 0
 
 # --- 2. STREAMLIT UI SETUP ---
 st.set_page_config(page_title="Cubicle Costing App", layout="wide")
@@ -205,7 +213,10 @@ st.title("Full-Fledged Cubicle Costing App")
 st.sidebar.header("1. Project Settings")
 sys_series = st.sidebar.selectbox("System Series", ["Scan", "Orient", "Monitor", "Tech 1", "Tech 3"])
 brand = st.sidebar.selectbox("Board Brand", ["ASUWARIS", "Formica"])
-finish = st.sidebar.selectbox("Finish Type", ["Solid", "Woodgrain"])
+finish_base = st.sidebar.selectbox("Finish Type", ["Solid", "Woodgrain"])
+texture_type = st.sidebar.radio("Surface Texture", ["Non-Texture (Matte/Gloss)", "Texture (TX)"])
+finish = f"{finish_base} TX" if "TX" in texture_type else finish_base
+
 thickness = st.sidebar.selectbox("Thickness", ["10mm", "12mm", "13mm", "18mm"])
 opt_mode = st.sidebar.radio("Board Stock Optimization", ["Ex-Stock (6x14 Only)", "All Stocks (Cost-Efficient)"])
 
@@ -216,7 +227,6 @@ st.sidebar.header("3. Logistics & Labor")
 area = st.sidebar.selectbox("Project Area (Labor)", list(LABOR_DB.keys()))
 transport_loc = st.sidebar.selectbox("Transport Destination", list(TRANSPORT_DB.keys()))
 lorry_type = st.sidebar.radio("Lorry Size", ["1 Tonne", "3 Tonne"])
-
 
 # --- 3. DIMENSIONS ---
 st.markdown("### Panel Dimensions & Quantities (mm)")
@@ -242,29 +252,28 @@ with col3:
     st.write("**Urinal Panels**")
     df_uri = st.data_editor(get_df(450, 900), num_rows="dynamic", key="uri", hide_index=True)
 
-def get_clean_rows(df):
+def get_clean_rows(df, label):
     rows = []
     for _, row in df.iterrows():
         try:
             qty = int(row.get('Qty', 0))
             w = float(row.get('Width', 0))
             h = float(row.get('Height', 0))
-            if qty > 0: rows.append({"w": w, "h": h, "qty": qty})
+            if qty > 0: rows.append({"label": label, "w": w, "h": h, "qty": qty})
         except: pass
     return rows
 
-doors = get_clean_rows(df_doors)
-int_pils = get_clean_rows(df_int_pil)
-end_pils = get_clean_rows(df_end_pil)
-divs = get_clean_rows(df_div)
-end_divs = get_clean_rows(df_end_div)
-uris = get_clean_rows(df_uri)
+doors = get_clean_rows(df_doors, "Door")
+int_pils = get_clean_rows(df_int_pil, "Int Pil")
+end_pils = get_clean_rows(df_end_pil, "End Pil")
+divs = get_clean_rows(df_div, "Div Pan")
+end_divs = get_clean_rows(df_end_div, "End Div")
+uris = get_clean_rows(df_uri, "Urinal")
 
 total_doors = sum(d['qty'] for d in doors)
 total_int_pil = sum(p['qty'] for p in int_pils)
 total_end_pil = sum(p['qty'] for p in end_pils)
 total_uri = sum(u['qty'] for u in uris)
-
 
 # --- 4. CALCULATE RECOMMENDATIONS ---
 rec = {k: 0 for k in ACCESSORIES_DB.keys()}
@@ -321,7 +330,6 @@ def hw_row(type_label, db_category):
         cost = ACCESSORIES_DB[db_category][sel]
         st.markdown(f"<div style='margin-top:8px;'>{cost:.2f}</div>", unsafe_allow_html=True)
     with c4:
-        # Pre-fill with rec_val, but user can edit it freely
         qty = st.number_input("Qty", min_value=0, value=rec_val, key=f"qty_{type_label}", label_visibility="collapsed")
     with c5:
         st.markdown(f"<div style='margin-top:8px;'>{cost * qty:.2f}</div>", unsafe_allow_html=True)
@@ -343,8 +351,93 @@ hw_row("Door Frame", "Door Frames")
 hw_row("Aluminium Acc", "Aluminium Profiles")
 hw_row("Others", "Others")
 
+# --- 6. NESTING ENGINE ---
+def generate_cutting_list(panels_list, allocated_boards, is_woodgrain):
+    items = []
+    kerf = 5
+    for p in panels_list:
+        for _ in range(p['qty']):
+            w, h = p['w'] + kerf, p['h'] + kerf
+            if not is_woodgrain:
+                if w > h: w, h = h, w
+            items.append({'label': p['label'], 'w': w, 'h': h, 'ow': p['w'], 'oh': p['h']})
+            
+    items.sort(key=lambda x: x['h'], reverse=True)
+    allocated_boards.sort(key=lambda x: x['h'], reverse=True)
+    
+    boards = [{'w': b['w'], 'h': b['h'], 'name': b['name'], 'shelves': [], 'used_h': 0} for b in allocated_boards]
+    unpacked_items = []
+    
+    for item in items:
+        placed = False
+        for board in boards:
+            for shelf in board['shelves']:
+                if shelf['used_w'] + item['w'] <= board['w'] and item['h'] <= shelf['h']:
+                    item['x'], item['y'] = shelf['used_w'], shelf['y']
+                    shelf['items'].append(item)
+                    shelf['used_w'] += item['w']
+                    placed = True
+                    break
+            if placed: break
+            
+            if board['used_h'] + item['h'] <= board['h']:
+                new_shelf = {'y': board['used_h'], 'h': item['h'], 'used_w': item['w'], 'items': [item]}
+                item['x'], item['y'] = 0, board['used_h']
+                board['shelves'].append(new_shelf)
+                board['used_h'] += item['h']
+                placed = True
+                break
+        if not placed:
+            unpacked_items.append(item)
+            
+    extra_count = 0
+    while unpacked_items:
+        new_board = {'w': 1830, 'h': 4270, 'name': '6x14 (Extra Overflow)', 'shelves': [], 'used_h': 0}
+        boards.append(new_board)
+        extra_count += 1
+        
+        items_to_pack = unpacked_items[:]
+        unpacked_items = []
+        for item in items_to_pack:
+            placed = False
+            for board in boards[-extra_count:]: 
+                for shelf in board['shelves']:
+                    if shelf['used_w'] + item['w'] <= board['w'] and item['h'] <= shelf['h']:
+                        item['x'], item['y'] = shelf['used_w'], shelf['y']
+                        shelf['items'].append(item)
+                        shelf['used_w'] += item['w']
+                        placed = True
+                        break
+                if placed: break
+                if board['used_h'] + item['h'] <= board['h']:
+                    new_shelf = {'y': board['used_h'], 'h': item['h'], 'used_w': item['w'], 'items': [item]}
+                    item['x'], item['y'] = 0, board['used_h']
+                    board['shelves'].append(new_shelf)
+                    board['used_h'] += item['h']
+                    placed = True
+                    break
+            if not placed: unpacked_items.append(item)
+            
+    return boards, extra_count
 
-# --- 6. BUTTONS LOGIC ---
+def render_cutting_html(boards, is_woodgrain):
+    html = "<div style='display:flex; flex-wrap:wrap; gap: 20px;'>"
+    scale = 0.08 
+    bg_css = "background: repeating-linear-gradient(to bottom, #deb887, #deb887 2px, #d2b48c 2px, #d2b48c 4px);" if is_woodgrain else "background: #add8e6;"
+    
+    for i, board in enumerate(boards):
+        html += f"<div style='border: 2px solid #333; width: {board['w'] * scale}px; height: {board['h'] * scale}px; position: relative; background: #fff; margin-bottom: 25px;'>"
+        for shelf in board['shelves']:
+            for item in shelf['items']:
+                html += f"<div style='position: absolute; left: {item['x'] * scale}px; top: {item['y'] * scale}px; width: {item['w'] * scale}px; height: {item['h'] * scale}px; border: 1px solid #000; {bg_css} display:flex; align-items:center; justify-content:center; overflow: hidden;'>"
+                html += f"<span style='background:rgba(255,255,255,0.7); font-size:10px; padding:2px; text-align:center;'><b>{item['label']}</b><br>{item['ow']}x{item['oh']}</span>"
+                html += "</div>"
+        html += f"<div style='position: absolute; bottom: -20px; width: 100%; text-align: center; font-weight: bold; font-size:14px;'>Board {i+1} ({board['name']})</div>"
+        html += "</div>"
+    html += "</div>"
+    return html
+
+# --- 7. BUTTONS LOGIC ---
 st.markdown("---")
 c_btn1, c_btn2 = st.columns(2)
 
@@ -352,32 +445,37 @@ with c_btn2:
     if st.button("🗑️ Clear & Reset Breakdown", use_container_width=True):
         st.session_state.mat_df = pd.DataFrame(columns=["Item", "Unit Cost (RM)", "Qty"])
         st.session_state.log_df = pd.DataFrame(columns=["Item", "Unit Cost (RM)", "Qty"])
+        st.session_state.cutting_html = ""
+        st.session_state.extra_boards_warning = 0
         st.session_state.calc_done = False
         st.rerun()
 
 with c_btn1:
     if st.button("➕ Update / Add to Materials Breakdown", type="primary", use_container_width=True):
         
-        # 1. Start with existing list from session state
         current_list = st.session_state.mat_df.to_dict('records')
         
-        # 2. Calculate Boards
+        # Board Yield Calculation
         kerf = 5
         total_area = 0
-        for item in doors + int_pils + end_pils + uris:
-            total_area += item['qty'] * (item['w'] + kerf) * (item['h'] + kerf)
+        all_panels = doors + int_pils + end_pils + uris
         if sys_series not in ["Tech 1", "Tech 3"]:
-            for item in divs + end_divs:
-                total_area += item['qty'] * (item['w'] + kerf) * (item['h'] + kerf)
+            all_panels += divs + end_divs
+            
+        for item in all_panels:
+            total_area += item['qty'] * (item['w'] + kerf) * (item['h'] + kerf)
 
         price_dict = ASUWARIS_PRICES[finish] if brand == "ASUWARIS" else FORMICA_PRICES[finish]
         used_boards = {}
+        allocated_boards = []
         
         if total_area > 0:
             if opt_mode == "Ex-Stock (6x14 Only)":
                 b_name = "6x14"
                 a_b = BOARD_DIMS[b_name][0] * BOARD_DIMS[b_name][1] * 0.85
-                used_boards[b_name] = math.ceil(total_area / a_b)
+                qty = math.ceil(total_area / a_b)
+                used_boards[b_name] = qty
+                for _ in range(qty): allocated_boards.append({'w': BOARD_DIMS[b_name][0], 'h': BOARD_DIMS[b_name][1], 'name': b_name})
             else:
                 sizes = ["6x14", "6x12", "6x8"] if brand == "ASUWARIS" else ["6x14", "6x12", "6x9"]
                 s14, s12, sSmall = sizes[0], sizes[1], sizes[2]
@@ -394,33 +492,35 @@ with c_btn1:
                         if cost < best_cost:
                             best_cost, best_combo = cost, {s14: n_14, s12: n_12, sSmall: n_small}
                 used_boards = {k: v for k, v in best_combo.items() if v > 0}
+                for k, v in used_boards.items():
+                    for _ in range(v): allocated_boards.append({'w': BOARD_DIMS[k][0], 'h': BOARD_DIMS[k][1], 'name': k})
 
-        # 3. Rebuild Board rows
-        # Remove old auto-calculated boards so we don't duplicate them on dimension changes
+        # Run 2D Packer
+        is_woodgrain = "Woodgrain" in finish
+        packed_boards, extra_boards = generate_cutting_list(all_panels, allocated_boards, is_woodgrain)
+        st.session_state.cutting_html = render_cutting_html(packed_boards, is_woodgrain)
+        st.session_state.extra_boards_warning = extra_boards
+
+        # Update List
         current_list = [row for row in current_list if not str(row.get("Item", "")).startswith("Raw Board")]
         
-        # Inject new boards at the top
         for b_size, qty in used_boards.items():
             current_list.insert(0, {"Item": f"Raw Board ({brand} {finish} {b_size})", "Unit Cost (RM)": price_dict[b_size], "Qty": qty})
 
-        # 4. Append/Update Hardware
         for sel, data in hw_selections.items():
             found = False
             for row in current_list:
-                # If exact model exists, update quantity to match the box
                 if row.get("Item") == sel:
                     row["Qty"] = data["Qty"]
                     row["Unit Cost (RM)"] = data["Cost"]
                     found = True
                     break
-            
-            # If the model does not exist (e.g., user changed the dropdown to a different type), append it!
             if not found:
                 current_list.append({"Item": sel, "Unit Cost (RM)": data["Cost"], "Qty": data["Qty"]})
 
         st.session_state.mat_df = pd.DataFrame(current_list)
 
-        # 5. Handle Logistics 
+        # Handle Logistics
         log_list = st.session_state.log_df.to_dict('records')
         log_list = [r for r in log_list if not (str(r.get("Item","")).startswith("Measurement Fee") or 
                                                 str(r.get("Item","")).startswith("Installation Labor") or 
@@ -441,13 +541,12 @@ with c_btn1:
         st.rerun()
 
 
-# --- 7. FINAL QUOTATION DATA EDITORS ---
+# --- 8. FINAL QUOTATION & VISUALIZER ---
 if st.session_state.calc_done:
     c1, c2 = st.columns([1.5, 1])
     
     with c1:
         st.subheader("Final Materials Breakdown")
-        
         edited_mat = st.data_editor(
             st.session_state.mat_df,
             column_config={
@@ -467,7 +566,6 @@ if st.session_state.calc_done:
 
     with c2:
         st.subheader("Final Logistics")
-        
         edited_log = st.data_editor(
             st.session_state.log_df,
             column_config={
@@ -486,13 +584,82 @@ if st.session_state.calc_done:
         st.metric("Total Logistics Cost", f"RM {log_total:,.2f}")
         
         st.markdown("---")
-        st.subheader("Project Grand Total")
-        grand_total = mat_total + log_total
+        st.subheader("Markups & Margins")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            wastage_pct = st.number_input("Wastage (%)", min_value=0.0, value=5.0, step=1.0)
+        with col_m2:
+            overhead_pct = st.number_input("Overhead (%)", min_value=0.0, value=20.0, step=1.0)
+        with col_m3:
+            margin_pct = st.number_input("Margin (%)", min_value=0.0, value=10.0, step=1.0)
+            
+        wastage_amt = mat_total * (wastage_pct / 100.0)
+        overhead_amt = (mat_total + log_total + wastage_amt) * (overhead_pct / 100.0)
+        total_cost = mat_total + log_total + wastage_amt + overhead_amt
+        margin_amt = total_cost * (margin_pct / 100.0)
+        
+        st.write(f"**Wastage Cost:** RM {wastage_amt:,.2f}")
+        st.write(f"**Overhead Cost:** RM {overhead_amt:,.2f}")
+        st.write(f"**Profit Margin:** RM {margin_amt:,.2f}")
+        
+        st.markdown("---")
+        st.subheader("Project Grand Total (Selling Price)")
+        grand_total = total_cost + margin_amt
         st.metric("Grand Total (RM)", f"RM {grand_total:,.2f}")
         
         if st.session_state.doors_count > 0:
-            st.write(f"**Estimated Cost per Cubicle:** RM {grand_total / st.session_state.doors_count:,.2f}")
+            st.write(f"**Estimated Price per Cubicle:** RM {grand_total / st.session_state.doors_count:,.2f}")
 
-    # Immediately save manual edits back to session state so they persist through updates
     st.session_state.mat_df = edited_mat
     st.session_state.log_df = edited_log
+
+    # 2D Visualizer Render
+    st.markdown("---")
+    st.subheader("✂️ 2D Board Cutting Layout (Heuristic Packing)")
+    
+    if st.session_state.extra_boards_warning > 0:
+        st.warning(f"**Heuristic Overflow Warning:** The 85% area average yield underestimated the specific physical cuts needed for your dimensions. The packer requires **{st.session_state.extra_boards_warning} extra 6x14 board(s)** to fit everything. You may want to manually update the Raw Boards quantity in the table above.")
+    else:
+        st.success("All pieces packed successfully within the estimated 85% area yield.")
+        
+    st.markdown(st.session_state.cutting_html, unsafe_allow_html=True)
+
+    # --- 9. EXCEL EXPORT ---
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        edited_mat.to_excel(writer, sheet_name="Materials", index=False)
+        edited_log.to_excel(writer, sheet_name="Logistics", index=False)
+        
+        summary_df = pd.DataFrame({
+            "Description": [
+                "Total Material Cost", 
+                "Total Logistics Cost", 
+                f"Wastage Cost ({wastage_pct}%)", 
+                f"Overhead Cost ({overhead_pct}%)", 
+                f"Profit Margin ({margin_pct}%)", 
+                "Project Grand Total", 
+                "Estimated Price per Cubicle"
+            ],
+            "Amount (RM)": [
+                mat_total, 
+                log_total, 
+                wastage_amt, 
+                overhead_amt, 
+                margin_amt, 
+                grand_total, 
+                grand_total / st.session_state.doors_count if st.session_state.doors_count > 0 else 0
+            ]
+        })
+        summary_df.to_excel(writer, sheet_name="Project Summary", index=False)
+        
+    excel_data = output.getvalue()
+    
+    st.markdown("---")
+    st.subheader("📥 Export Quotation")
+    st.download_button(
+        label="Download to Excel (.xlsx)",
+        data=excel_data,
+        file_name="Cubicle_Quotation.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
