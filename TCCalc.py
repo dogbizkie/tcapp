@@ -20,7 +20,7 @@ FORMICA_PRICES = {
 
 BOARD_DIMS = {
     "6x8": (1830, 2440), "6x9": (1830, 2745), 
-    "6x12": (1830, 3660), "6x14": (1830, 4270)
+    "6x12": (1830, 3660), "6x14": (1830, 4260)
 }
 
 ACCESSORIES_DB = {
@@ -392,7 +392,7 @@ def generate_cutting_list(panels_list, allocated_boards, is_woodgrain):
             
     extra_count = 0
     while unpacked_items:
-        new_board = {'w': 1830, 'h': 4270, 'name': '6x14 (Extra Overflow)', 'shelves': [], 'used_h': 0}
+        new_board = {'w': 1830, 'h': 4260, 'name': '6x14 (Extra Overflow)', 'shelves': [], 'used_h': 0}
         boards.append(new_board)
         extra_count += 1
         
@@ -585,20 +585,16 @@ if st.session_state.calc_done:
         
         st.markdown("---")
         st.subheader("Markups & Margins")
-        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1, col_m2 = st.columns(2)
         with col_m1:
-            wastage_pct = st.number_input("Wastage (%)", min_value=0.0, value=5.0, step=1.0)
-        with col_m2:
             overhead_pct = st.number_input("Overhead (%)", min_value=0.0, value=20.0, step=1.0)
-        with col_m3:
+        with col_m2:
             margin_pct = st.number_input("Margin (%)", min_value=0.0, value=10.0, step=1.0)
             
-        wastage_amt = mat_total * (wastage_pct / 100.0)
-        overhead_amt = (mat_total + log_total + wastage_amt) * (overhead_pct / 100.0)
-        total_cost = mat_total + log_total + wastage_amt + overhead_amt
+        overhead_amt = (mat_total + log_total) * (overhead_pct / 100.0)
+        total_cost = mat_total + log_total + overhead_amt
         margin_amt = total_cost * (margin_pct / 100.0)
         
-        st.write(f"**Wastage Cost:** RM {wastage_amt:,.2f}")
         st.write(f"**Overhead Cost:** RM {overhead_amt:,.2f}")
         st.write(f"**Profit Margin:** RM {margin_amt:,.2f}")
         
@@ -634,7 +630,6 @@ if st.session_state.calc_done:
             "Description": [
                 "Total Material Cost", 
                 "Total Logistics Cost", 
-                f"Wastage Cost ({wastage_pct}%)", 
                 f"Overhead Cost ({overhead_pct}%)", 
                 f"Profit Margin ({margin_pct}%)", 
                 "Project Grand Total", 
@@ -643,7 +638,6 @@ if st.session_state.calc_done:
             "Amount (RM)": [
                 mat_total, 
                 log_total, 
-                wastage_amt, 
                 overhead_amt, 
                 margin_amt, 
                 grand_total, 
